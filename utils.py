@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import OrdinalEncoder
 
+GLOBAL_SEED = 755
 
 class Dataset:
     def __init__(self, data_path='./data', train=True) -> None:

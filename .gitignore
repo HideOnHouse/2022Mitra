@@ -1,1 +1,4 @@
 data/
+ckpt/
+__pycache__/
+*.out
