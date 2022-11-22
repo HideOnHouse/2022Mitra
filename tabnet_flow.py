@@ -1,7 +1,9 @@
+import sys
+
 import numpy as np
 from pytorch_tabnet.metrics import Metric
 from pytorch_tabnet.tab_model import TabNetClassifier
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, classification_report
 
 from utils import *
 
@@ -17,7 +19,8 @@ class F1(Metric):
         return f1_score(y_true, y_pred)
 
 
-def main():
+def main(args):
+    train = True if args[1] == 'train' else False
     train_dataset = FlowDataset(train=True)
     valid_dataset = FlowDataset(train=False)
     x_train, y_train = train_dataset.get_xy()
@@ -31,13 +34,21 @@ def main():
     cat_idxs = [idx for idx in range(
         len(feature_names)) if feature_names[idx] in ordinal_cols]
     cat_dims = [ordinal_cols[i] for i in feature_names if i in ordinal_cols]
-
     model = TabNetClassifier(
         cat_idxs=cat_idxs, cat_dims=cat_dims, seed=GLOBAL_SEED, device_name='cuda:1')
-    model.fit(x_train, y_train, eval_set=[
-              (x_valid, y_valid)], batch_size=128, num_workers=2, eval_metric=[F1])
-    model.save_model("./ckpt/tabnet_flow.pt")
+    if train:
+        print("Training model")
+        model.fit(x_train, y_train, eval_set=[
+                (x_valid, y_valid)], batch_size=128, num_workers=2, eval_metric=[F1])
+        model.save_model("./ckpt/tabnet_flow.pt")
+    else:
+        model.load_model("./ckpt/tabnet_flow.pt.zip")
+    print("Validate Model")
+    pred = model.predict(x_valid)
+    f1 = f1_score(y_valid, pred)
+    print(f"f1-score: {f1:.5f}")
+    print(classification_report(y_valid, pred))
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv)

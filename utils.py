@@ -6,6 +6,7 @@ from sklearn.preprocessing import OrdinalEncoder
 
 GLOBAL_SEED = 755
 
+
 class Dataset:
     def __init__(self, data_path='./data', train=True) -> None:
         self.initialized = False
@@ -21,7 +22,7 @@ class Dataset:
             self.df = pd.read_pickle(df_path + os.extsep + 'pkl')
         else:
             self.df = pd.read_csv(df_path + os.extsep + 'csv')
-            self.df.to_pickle(df_path + os.extsep + 'pkl')        
+            self.df.to_pickle(df_path + os.extsep + 'pkl')
         self.__preprocess()
 
     def __swap_src_dst(self):
@@ -31,6 +32,12 @@ class Dataset:
         swap_src = ['src_ip', 'src_port', 'dst_ip', 'dst_port']
         swap_dst = ['dst_ip', 'dst_port', 'src_ip', 'src_port']
         df.loc[idx, swap_src] = df.loc[idx, swap_dst].values
+
+    def __process_port(self):
+        df = self.df
+        df['src_port'] = df['src_port'].apply(lambda x: 0 if x <= 1024 else 1)
+        df['dst_port'] = df['src_port'].apply(lambda x: 0 if x <= 1024 else 1)
+        self.df = df
 
     def __encode_label(self):
         df = self.df
@@ -47,6 +54,7 @@ class Dataset:
 
     def __preprocess(self):
         self.__swap_src_dst()
+        # self.__process_port()
         self.__encode_label()
         self.__process_ordinal()
         self.initialized = True
@@ -64,7 +72,7 @@ class FlowDataset(Dataset):
         super().__init__(data_path, train)
         self.x = None
         self.y = None
-    
+
     def get_xy(self, inference=False):
         assert self.initialized
         if self.x is None or self.y is None:
@@ -87,42 +95,89 @@ class GroupDataset(Dataset):
         self.y = None
         self.k = None
         self.feature_names = []
+        self.agg_names = ['std', 'min', 'max',
+                          'median', 'mean', 'kurt', 'skew']
+
+    def __fmt(self, arg):
+        h, m, s = map(int, arg.split(":"))
+        return h * 3600 + m * 60 + s
+
+    def __get_interval_feature(self, x):
+        ret = []
+        x = sorted(x)
+        for i in range(1, len(x)):
+            left = self.__fmt(x[i - 1])
+            right = self.__fmt(x[i])
+            ret.append(right - left)
+        ret = pd.Series(ret, dtype=np.float32)
+        features = [ret.std(), ret.min(), ret.max(), ret.median(),
+                    ret.mean(), ret.kurt(), ret.skew()]
+        return np.array(features)
 
     def __get_agg_feature(self):
         self.feature_names.clear()
         df = self.df.copy()
         feature_cols = [i for i in df.columns if i not in self.except_cols]
         raw = df.groupby('dst_ip')
+        ret = []
+
+        # interval features
+        temp = raw['timestamp'].apply(self.__get_interval_feature)
+        temp = np.array(temp.tolist())
+        ret.append(temp)
+        self.feature_names.extend(['interval_std',
+                                   'interval_min',
+                                   'interval_max',
+                                   'interval_median',
+                                   'interval_mean',
+                                   'interval_kurt',
+                                   'interval_skew'
+                                   ])
+        # end interval features
+
         key = raw['dst_ip'].count().index.to_numpy()
         raw = raw[feature_cols]
-        sum_feature = raw.sum().values
-        self.feature_names.append(f"{i}_sum" for i in feature_cols)
-        
-        std_feature = raw.std().values
-        self.feature_names.append(f"{i}_std" for i in feature_cols)
-        
-        min_feature = raw.min().values
-        self.feature_names.append(f"{i}_min" for i in feature_cols)
-        
-        max_feature = raw.max().values
-        self.feature_names.append(f"{i}_max" for i in feature_cols)
-        
-        median_feature = raw.median().values
-        self.feature_names.append(f"{i}_median" for i in feature_cols)
-        
-        mean_feature = raw.mean().values
-        self.feature_names.append(f"{i}_mean" for i in feature_cols)
-        
-        kurt_feature = raw.apply(pd.DataFrame.kurt).values
-        self.feature_names.append(f"{i}_kurt" for i in feature_cols)
-        
-        skew_feature = raw.apply(pd.DataFrame.skew).values
-        self.feature_names.append(f"{i}_skew" for i in feature_cols)
-        
-        feature = np.concatenate([sum_feature, mean_feature, median_feature, min_feature,
-                                 max_feature, std_feature, kurt_feature, skew_feature], axis=1)
-        feature = np.nan_to_num(feature, nan=0)
-        return feature, key
+        for agg in self.agg_names:
+            if agg == 'sum':
+                temp = raw.sum().values
+                self.feature_names.extend([f"{i}_sum" for i in feature_cols])
+            elif agg == 'std':
+                temp = raw.std().values
+                self.feature_names.extend([f"{i}_std" for i in feature_cols])
+            elif agg == 'min':
+                temp = raw.min().values
+                self.feature_names.extend([f"{i}_min" for i in feature_cols])
+            elif agg == 'max':
+                temp = raw.max().values
+                self.feature_names.extend([f"{i}_max" for i in feature_cols])
+            elif agg == 'median':
+                temp = raw.median().values
+                self.feature_names.extend(
+                    [f"{i}_median" for i in feature_cols])
+            elif agg == 'mean':
+                temp = raw.mean().values
+                self.feature_names.extend([f"{i}_mean" for i in feature_cols])
+            elif agg == 'kurt':
+                temp = raw.apply(pd.DataFrame.kurt).values
+                self.feature_names.extend([f"{i}_kurt" for i in feature_cols])
+            elif agg == 'skew':
+                temp = raw.apply(pd.DataFrame.skew).values
+                self.feature_names.extend([f"{i}_skew" for i in feature_cols])
+            elif agg == 'mode':
+                temp = raw.apply(pd.DataFrame.mode).values
+                self.feature_names.extend([f"{i}_mode" for i in feature_cols])
+            else:
+                raise NotImplementedError(
+                    f"aggregation {agg} not implemented yet")
+            ret.append(temp)
+
+        agg = np.concatenate(ret, axis=1)
+        agg = np.nan_to_num(agg, nan=0)
+        ind = np.argsort(self.feature_names)
+        agg = agg[:, ind]
+        self.feature_names = [self.feature_names[i] for i in ind]
+
+        return agg, key
 
     def __get_group_label(self, key):
         temp = self.df.groupby('dst_ip')['label'].value_counts()
