@@ -8,16 +8,22 @@ GLOBAL_SEED = 755
 
 
 class Dataset:
-    def __init__(self, data_path='./data', train=True) -> None:
+    def __init__(self, data_path='./data', train=True, test=False) -> None:
         self.initialized = False
         self.df = None
         self.except_cols = {'src_ip', 'dst_ip', 'timestamp', 'label'}
         self.feature_names = None
-        self.outer_mal = pd.read_pickle(f"{data_path}{os.sep}outer_mal_IP.pkl")
-        self.outer_ben = pd.read_pickle(
-            f"{data_path}{os.sep}outer_benign_IP.pkl")
-        self.outer = self.outer_ben | self.outer_mal
-        df_path = f"{data_path}{os.sep}{'train' if train else 'valid'}"
+        self.test = test
+        if test == False:
+            self.outer_mal = pd.read_pickle(f"{data_path}{os.sep}outer_mal_IP.pkl")
+            self.outer_ben = pd.read_pickle(
+                f"{data_path}{os.sep}outer_benign_IP.pkl")
+            self.outer = self.outer_ben | self.outer_mal
+            df_path = f"{data_path}{os.sep}{'train' if train else 'valid'}"
+        else:
+            self.outer = pd.read_pickle('./data/outer_ip_set.pkl')
+            df_path = './data/project2_test'
+        print(f"reading {df_path}")
         if os.path.exists(df_path + os.extsep + 'pkl'):
             self.df = pd.read_pickle(df_path + os.extsep + 'pkl')
         else:
@@ -55,7 +61,8 @@ class Dataset:
     def __preprocess(self):
         self.__swap_src_dst()
         # self.__process_port()
-        self.__encode_label()
+        if not self.test:
+            self.__encode_label()
         self.__process_ordinal()
         self.initialized = True
 
@@ -68,8 +75,8 @@ class Dataset:
 
 
 class FlowDataset(Dataset):
-    def __init__(self, data_path='./data', train=True) -> None:
-        super().__init__(data_path, train)
+    def __init__(self, data_path='./data', train=True, test=False) -> None:
+        super().__init__(data_path, train, test)
         self.x = None
         self.y = None
 
@@ -89,8 +96,8 @@ class FlowDataset(Dataset):
 
 
 class GroupDataset(Dataset):
-    def __init__(self, data_path='./data', train=True) -> None:
-        super().__init__(data_path, train)
+    def __init__(self, data_path='./data', train=True, test=False) -> None:
+        super().__init__(data_path, train, test)
         self.x = None
         self.y = None
         self.k = None
@@ -195,13 +202,17 @@ class GroupDataset(Dataset):
     def get_xy(self, inference=False):
         assert self.initialized
         if self.x is None or self.y is None:
-            if inference:
+            if self.test:
                 x, k = self.__get_agg_feature()
                 y = None
             else:
-                x, k = self.__get_agg_feature()
-                y = self.__get_group_label(k)
-            assert x.shape[0] == y.shape[0]
+                if inference:
+                    x, k = self.__get_agg_feature()
+                    y = None
+                else:
+                    x, k = self.__get_agg_feature()
+                    y = self.__get_group_label(k)
+                assert x.shape[0] == y.shape[0]
             self.x = x
             self.y = y
             self.k = k
